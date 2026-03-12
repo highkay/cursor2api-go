@@ -341,6 +341,10 @@ curl -H "Authorization: Bearer 0000" http://localhost:8002/v1/models</code>
                         <div class="model-name">claude-sonnet-4.6</div>
                         <div class="provider">Anthropic Claude</div>
                     </div>
+                    <div class="model-card" onclick="selectModel('claude-sonnet-4.6-thinking')">
+                        <div class="model-name">claude-sonnet-4.6-thinking</div>
+                        <div class="provider">Anthropic Claude + Thinking</div>
+                    </div>
                 </div>
 
                 <div id="selectedModelInfo" style="display: none; margin-top: 30px;">
@@ -369,7 +373,7 @@ curl -H "Authorization: Bearer 0000" http://localhost:8002/v1/models</code>
                 <div class="endpoint-card">
                     <div class="method-badge method-post">POST</div>
                     <strong>/v1/chat/completions</strong>
-                    <p>创建聊天完成请求，支持流式和非流式响应</p>
+                    <p>创建聊天完成请求，支持流式、非流式和 OpenAI 兼容 tool_calls</p>
                     <div class="code-block" style="margin-top: 15px;">
                         <button class="copy-btn" onclick="copyCode(this)">复制</button>
                         <code>curl -X POST http://localhost:8002/v1/chat/completions \

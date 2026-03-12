@@ -21,6 +21,7 @@
 package services
 
 import (
+	"bufio"
 	"context"
 	"cursor2api-go/config"
 	"cursor2api-go/middleware"
@@ -91,9 +92,12 @@ func NewCursorService(cfg *config.Config) *CursorService {
 
 // ChatCompletion creates a chat completion stream for the given request.
 func (s *CursorService) ChatCompletion(ctx context.Context, request *models.ChatCompletionRequest) (<-chan interface{}, error) {
-	payload := s.buildCursorRequest(request)
+	buildResult, err := s.buildCursorRequest(request)
+	if err != nil {
+		return nil, err
+	}
 
-	jsonPayload, err := json.Marshal(payload)
+	jsonPayload, err := json.Marshal(buildResult.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal cursor payload: %w", err)
 	}
@@ -178,32 +182,95 @@ func (s *CursorService) ChatCompletion(ctx context.Context, request *models.Chat
 
 		// 成功,返回结果
 		output := make(chan interface{}, 32)
-		go s.consumeSSE(ctx, resp.Response, output)
+		go s.consumeSSE(ctx, resp.Response, output, buildResult.ParseConfig)
 		return output, nil
 	}
 
 	return nil, fmt.Errorf("failed after %d attempts", maxRetries)
 }
 
-func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest) models.CursorRequest {
-	truncatedMessages := s.truncateMessages(request.Messages)
-	cursorMessages := models.ToCursorMessages(truncatedMessages, s.config.SystemPromptInject)
+func (s *CursorService) consumeSSE(ctx context.Context, resp *http.Response, output chan interface{}, parseConfig models.CursorParseConfig) {
+	defer close(output)
+	defer resp.Body.Close()
 
-	payload := models.CursorRequest{
-		Context:  []interface{}{},
-		Model:    models.GetCursorModel(request.Model),
-		ID:       utils.GenerateRandomString(16),
-		Messages: cursorMessages,
-		Trigger:  "submit-message",
+	parser := utils.NewCursorProtocolParser(parseConfig)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	flushParser := func() {
+		for _, event := range parser.Finish() {
+			select {
+			case output <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 
-	return payload
-}
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 
-func (s *CursorService) consumeSSE(ctx context.Context, resp *http.Response, output chan interface{}) {
-	defer close(output)
+		data := utils.ParseSSELine(scanner.Text())
+		if data == "" {
+			continue
+		}
 
-	if err := utils.ReadSSEStream(ctx, resp, output); err != nil {
+		if data == "[DONE]" {
+			flushParser()
+			return
+		}
+
+		var eventData models.CursorEventData
+		if err := json.Unmarshal([]byte(data), &eventData); err != nil {
+			logrus.WithError(err).Debugf("Failed to parse SSE data: %s", data)
+			continue
+		}
+
+		switch eventData.Type {
+		case "error":
+			if eventData.ErrorText != "" {
+				errResp := middleware.NewCursorWebError(http.StatusBadGateway, "cursor API error: "+eventData.ErrorText)
+				select {
+				case output <- errResp:
+				default:
+					logrus.WithError(errResp).Warn("failed to push SSE error to channel")
+				}
+				return
+			}
+		case "finish":
+			flushParser()
+			if eventData.MessageMetadata != nil && eventData.MessageMetadata.Usage != nil {
+				usage := models.Usage{
+					PromptTokens:     eventData.MessageMetadata.Usage.InputTokens,
+					CompletionTokens: eventData.MessageMetadata.Usage.OutputTokens,
+					TotalTokens:      eventData.MessageMetadata.Usage.TotalTokens,
+				}
+				select {
+				case output <- usage:
+				case <-ctx.Done():
+					return
+				}
+			}
+			return
+		default:
+			if eventData.Delta == "" {
+				continue
+			}
+			for _, event := range parser.Feed(eventData.Delta) {
+				select {
+				case output <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -213,7 +280,10 @@ func (s *CursorService) consumeSSE(ctx context.Context, resp *http.Response, out
 		default:
 			logrus.WithError(err).Warn("failed to push SSE error to channel")
 		}
+		return
 	}
+
+	flushParser()
 }
 
 func (s *CursorService) fetchXIsHuman(ctx context.Context) (string, error) {
@@ -307,7 +377,7 @@ func (s *CursorService) prepareJS(cursorJS string) string {
 	return mainScript
 }
 
-func (s *CursorService) truncateMessages(messages []models.Message) []models.Message {
+func (s *CursorService) truncateCursorMessages(messages []models.CursorMessage) []models.CursorMessage {
 	if len(messages) == 0 || s.config.MaxInputLength <= 0 {
 		return messages
 	}
@@ -315,19 +385,19 @@ func (s *CursorService) truncateMessages(messages []models.Message) []models.Mes
 	maxLength := s.config.MaxInputLength
 	total := 0
 	for _, msg := range messages {
-		total += len(msg.GetStringContent())
+		total += cursorMessageTextLength(msg)
 	}
 
 	if total <= maxLength {
 		return messages
 	}
 
-	var result []models.Message
+	var result []models.CursorMessage
 	startIdx := 0
 
 	if strings.EqualFold(messages[0].Role, "system") {
 		result = append(result, messages[0])
-		maxLength -= len(messages[0].GetStringContent())
+		maxLength -= cursorMessageTextLength(messages[0])
 		if maxLength < 0 {
 			maxLength = 0
 		}
@@ -335,10 +405,10 @@ func (s *CursorService) truncateMessages(messages []models.Message) []models.Mes
 	}
 
 	current := 0
-	collected := make([]models.Message, 0, len(messages)-startIdx)
+	collected := make([]models.CursorMessage, 0, len(messages)-startIdx)
 	for i := len(messages) - 1; i >= startIdx; i-- {
 		msg := messages[i]
-		msgLen := len(msg.GetStringContent())
+		msgLen := cursorMessageTextLength(msg)
 		if msgLen == 0 {
 			continue
 		}
@@ -354,6 +424,14 @@ func (s *CursorService) truncateMessages(messages []models.Message) []models.Mes
 	}
 
 	return append(result, collected...)
+}
+
+func cursorMessageTextLength(msg models.CursorMessage) int {
+	total := 0
+	for _, part := range msg.Parts {
+		total += len(part.Text)
+	}
+	return total
 }
 
 func (s *CursorService) chatHeaders(xIsHuman string) map[string]string {

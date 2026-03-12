@@ -27,20 +27,25 @@ import (
 
 // ChatCompletionRequest OpenAI聊天完成请求
 type ChatCompletionRequest struct {
-	Model       string    `json:"model" binding:"required"`
-	Messages    []Message `json:"messages" binding:"required"`
-	Stream      bool      `json:"stream,omitempty"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	Stop        []string  `json:"stop,omitempty"`
-	User        string    `json:"user,omitempty"`
+	Model       string          `json:"model" binding:"required"`
+	Messages    []Message       `json:"messages" binding:"required"`
+	Stream      bool            `json:"stream,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Stop        []string        `json:"stop,omitempty"`
+	User        string          `json:"user,omitempty"`
+	Tools       []Tool          `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
 }
 
 // Message 消息结构
 type Message struct {
-	Role    string      `json:"role" binding:"required"`
-	Content interface{} `json:"content" binding:"required"`
+	Role       string      `json:"role" binding:"required"`
+	Content    interface{} `json:"content"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Name       string      `json:"name,omitempty"`
 }
 
 // ContentPart 消息内容部分（用于多模态内容）
@@ -48,6 +53,43 @@ type ContentPart struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
 	URL  string `json:"url,omitempty"`
+}
+
+// Tool OpenAI工具定义
+type Tool struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+// FunctionDefinition OpenAI函数定义
+type FunctionDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// ToolCall OpenAI工具调用
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+
+// FunctionCall OpenAI函数调用信息
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolChoiceObject OpenAI tool_choice 对象形式
+type ToolChoiceObject struct {
+	Type     string              `json:"type"`
+	Function *ToolChoiceFunction `json:"function,omitempty"`
+}
+
+// ToolChoiceFunction tool_choice 中的函数名
+type ToolChoiceFunction struct {
+	Name string `json:"name"`
 }
 
 // ChatCompletionResponse OpenAI聊天完成响应
@@ -85,8 +127,23 @@ type StreamChoice struct {
 
 // StreamDelta 流式增量数据
 type StreamDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
+}
+
+// ToolCallDelta 流式工具调用增量
+type ToolCallDelta struct {
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *FunctionCallDelta `json:"function,omitempty"`
+}
+
+// FunctionCallDelta 流式函数调用增量
+type FunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 // Usage 使用统计
@@ -172,6 +229,29 @@ type SSEEvent struct {
 	ID    string `json:"id,omitempty"`
 }
 
+// CursorParseConfig 定义上游文本协议解析选项
+type CursorParseConfig struct {
+	TriggerSignal   string
+	ThinkingEnabled bool
+}
+
+// AssistantEventKind 助手输出事件类型
+type AssistantEventKind string
+
+const (
+	AssistantEventText     AssistantEventKind = "text"
+	AssistantEventThinking AssistantEventKind = "thinking"
+	AssistantEventToolCall AssistantEventKind = "tool_call"
+)
+
+// AssistantEvent 是内部流式解析事件
+type AssistantEvent struct {
+	Kind     AssistantEventKind
+	Text     string
+	Thinking string
+	ToolCall *ToolCall
+}
+
 // GetStringContent 获取消息的字符串内容
 func (m *Message) GetStringContent() string {
 	if m.Content == nil {
@@ -190,7 +270,6 @@ func (m *Message) GetStringContent() string {
 		}
 		return text
 	case []interface{}:
-		// 处理混合类型内容
 		var text string
 		for _, item := range content {
 			if part, ok := item.(map[string]interface{}); ok {
@@ -203,7 +282,6 @@ func (m *Message) GetStringContent() string {
 		}
 		return text
 	default:
-		// 尝试将其他类型转换为JSON字符串
 		if data, err := json.Marshal(content); err == nil {
 			return string(data)
 		}
@@ -215,10 +293,8 @@ func (m *Message) GetStringContent() string {
 func ToCursorMessages(messages []Message, systemPromptInject string) []CursorMessage {
 	var result []CursorMessage
 
-	// 处理系统提示注入
 	if systemPromptInject != "" {
 		if len(messages) > 0 && messages[0].Role == "system" {
-			// 如果第一条已经是系统消息，追加注入内容
 			content := messages[0].GetStringContent()
 			content += "\n" + systemPromptInject
 			result = append(result, CursorMessage{
@@ -227,9 +303,8 @@ func ToCursorMessages(messages []Message, systemPromptInject string) []CursorMes
 					{Type: "text", Text: content},
 				},
 			})
-			messages = messages[1:] // 跳过第一条消息
+			messages = messages[1:]
 		} else {
-			// 如果第一条不是系统消息或没有消息，插入新的系统消息
 			result = append(result, CursorMessage{
 				Role: "system",
 				Parts: []CursorPart{
@@ -238,23 +313,21 @@ func ToCursorMessages(messages []Message, systemPromptInject string) []CursorMes
 			})
 		}
 	} else if len(messages) > 0 && messages[0].Role == "system" {
-		// 如果有系统消息但没有注入内容，直接添加
 		result = append(result, CursorMessage{
 			Role: "system",
 			Parts: []CursorPart{
 				{Type: "text", Text: messages[0].GetStringContent()},
 			},
 		})
-		messages = messages[1:] // 跳过第一条消息
+		messages = messages[1:]
 	}
 
-	// 转换其余消息
 	for _, msg := range messages {
 		if msg.Role == "" {
-			continue // 跳过空消息
+			continue
 		}
 
-		cursorMsg := CursorMessage{
+		result = append(result, CursorMessage{
 			Role: msg.Role,
 			Parts: []CursorPart{
 				{
@@ -262,15 +335,14 @@ func ToCursorMessages(messages []Message, systemPromptInject string) []CursorMes
 					Text: msg.GetStringContent(),
 				},
 			},
-		}
-		result = append(result, cursorMsg)
+		})
 	}
 
 	return result
 }
 
 // NewChatCompletionResponse 创建聊天完成响应
-func NewChatCompletionResponse(id, model, content string, usage Usage) *ChatCompletionResponse {
+func NewChatCompletionResponse(id, model string, message Message, finishReason string, usage Usage) *ChatCompletionResponse {
 	return &ChatCompletionResponse{
 		ID:      id,
 		Object:  "chat.completion",
@@ -278,12 +350,9 @@ func NewChatCompletionResponse(id, model, content string, usage Usage) *ChatComp
 		Model:   model,
 		Choices: []Choice{
 			{
-				Index: 0,
-				Message: Message{
-					Role:    "assistant",
-					Content: content,
-				},
-				FinishReason: "stop",
+				Index:        0,
+				Message:      message,
+				FinishReason: finishReason,
 			},
 		},
 		Usage: usage,
@@ -291,7 +360,7 @@ func NewChatCompletionResponse(id, model, content string, usage Usage) *ChatComp
 }
 
 // NewChatCompletionStreamResponse 创建流式响应
-func NewChatCompletionStreamResponse(id, model, content string, finishReason *string) *ChatCompletionStreamResponse {
+func NewChatCompletionStreamResponse(id, model string, delta StreamDelta, finishReason *string) *ChatCompletionStreamResponse {
 	return &ChatCompletionStreamResponse{
 		ID:      id,
 		Object:  "chat.completion.chunk",
@@ -299,10 +368,8 @@ func NewChatCompletionStreamResponse(id, model, content string, finishReason *st
 		Model:   model,
 		Choices: []StreamChoice{
 			{
-				Index: 0,
-				Delta: StreamDelta{
-					Content: content,
-				},
+				Index:        0,
+				Delta:        delta,
 				FinishReason: finishReason,
 			},
 		},

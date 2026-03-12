@@ -82,7 +82,11 @@ func TestGetModels(t *testing.T) {
 	}
 
 	models := config.GetModels()
-	expected := []string{"gpt-4o", "claude-3", "gpt-3.5"}
+	expected := []string{
+		"gpt-4o", "gpt-4o-thinking",
+		"claude-3", "claude-3-thinking",
+		"gpt-3.5", "gpt-3.5-thinking",
+	}
 
 	if len(models) != len(expected) {
 		t.Errorf("GetModels() length = %v, want %v", len(models), len(expected))
@@ -106,6 +110,7 @@ func TestIsValidModel(t *testing.T) {
 		expected bool
 	}{
 		{"valid model gpt-4o", "gpt-4o", true},
+		{"valid thinking model gpt-4o-thinking", "gpt-4o-thinking", true},
 		{"valid model claude-3", "claude-3", true},
 		{"invalid model gpt-5", "gpt-5", false},
 		{"empty model", "", false},
@@ -130,60 +135,60 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				Port:            8000,
-				APIKey:          "test-key",
-				Timeout:         30,
-				MaxInputLength:  1000,
+				Port:           8000,
+				APIKey:         "test-key",
+				Timeout:        30,
+				MaxInputLength: 1000,
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid port - too low",
 			config: &Config{
-				Port:            0,
-				APIKey:          "test-key",
-				Timeout:         30,
-				MaxInputLength:  1000,
+				Port:           0,
+				APIKey:         "test-key",
+				Timeout:        30,
+				MaxInputLength: 1000,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid port - too high",
 			config: &Config{
-				Port:            70000,
-				APIKey:          "test-key",
-				Timeout:         30,
-				MaxInputLength:  1000,
+				Port:           70000,
+				APIKey:         "test-key",
+				Timeout:        30,
+				MaxInputLength: 1000,
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing API key",
 			config: &Config{
-				Port:            8000,
-				APIKey:          "",
-				Timeout:         30,
-				MaxInputLength:  1000,
+				Port:           8000,
+				APIKey:         "",
+				Timeout:        30,
+				MaxInputLength: 1000,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid timeout",
 			config: &Config{
-				Port:            8000,
-				APIKey:          "test-key",
-				Timeout:         0,
-				MaxInputLength:  1000,
+				Port:           8000,
+				APIKey:         "test-key",
+				Timeout:        0,
+				MaxInputLength: 1000,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid max input length",
 			config: &Config{
-				Port:            8000,
-				APIKey:          "test-key",
-				Timeout:         30,
-				MaxInputLength:  0,
+				Port:           8000,
+				APIKey:         "test-key",
+				Timeout:        30,
+				MaxInputLength: 0,
 			},
 			wantErr: true,
 		},

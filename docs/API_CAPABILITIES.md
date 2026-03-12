@@ -3,25 +3,40 @@
 ## Supported
 
 - OpenAI-compatible `POST /v1/chat/completions`
-- Non-stream responses with plain text assistant output
-- Stream responses with plain text chunks
+- OpenAI-compatible `GET /v1/models`
+- Non-stream responses with:
+  - plain assistant text
+  - assistant `tool_calls`
+- Stream responses with:
+  - `delta.content`
+  - `delta.tool_calls`
 - Multi-turn context via the `messages` array
-- `GET /v1/models`
+- Tool request fields:
+  - `tools`
+  - `tool_choice`
+  - assistant history `tool_calls`
+  - tool role history `tool_call_id`
+- Automatically derived `*-thinking` public models, for example:
+  - `claude-sonnet-4.6`
+  - `claude-sonnet-4.6-thinking`
 - Bearer token auth via `Authorization: Bearer <API_KEY>`
+
+## Behavior Notes
+
+- Tool support is implemented through an internal prompt-and-parser bridge, not Cursor-native tool calling.
+- Base models keep the current model name and enable tool use.
+- `*-thinking` models map back to the same upstream base model, but also enable the internal thinking protocol.
+- Thinking is an internal bridge capability only. The public OpenAI response does not expose a separate reasoning field.
 
 ## Not Supported
 
-- OpenAI/KiloCode native tool calling
-- MCP tool orchestration
-- `tool_calls`, `tools`, `tool_choice`
-- Function calling / agent loops
-- Direct local filesystem execution through the API
+- Anthropic `/v1/messages`
+- MCP orchestration
+- Native upstream OpenAI tool execution
+- Exposed reasoning/thinking response fields
+- Local filesystem or OS command execution through the API
 
-## Recommended Usage
-
-Use this service as a plain chat-completions gateway.
-
-Example non-stream request:
+## Example: Non-Stream Tool Call
 
 ```bash
 curl -X POST http://127.0.0.1:8002/v1/chat/completions \
@@ -31,15 +46,53 @@ curl -X POST http://127.0.0.1:8002/v1/chat/completions \
     "model": "claude-sonnet-4.6",
     "stream": false,
     "messages": [
-      {"role": "system", "content": "You are a concise assistant."},
-      {"role": "user", "content": "记住我最喜欢的颜色是蓝色。"},
-      {"role": "assistant", "content": "好的，我记住了。"},
-      {"role": "user", "content": "我最喜欢什么颜色？"}
+      {"role": "user", "content": "帮我查询北京天气"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get current weather",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {"type": "string"}
+            },
+            "required": ["city"]
+          }
+        }
+      }
     ]
   }'
 ```
 
-## Notes
+## Example: Thinking Model
 
-- Context continuity depends on the caller sending prior messages back in `messages`.
-- If you need tool use, use a provider that natively supports OpenAI-compatible tool calling.
+```bash
+curl -X POST http://127.0.0.1:8002/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 0000" \
+  -d '{
+    "model": "claude-sonnet-4.6-thinking",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "先思考，再决定是否需要工具"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "q": {"type": "string"}
+            },
+            "required": ["q"]
+          }
+        }
+      }
+    ]
+  }'
+```

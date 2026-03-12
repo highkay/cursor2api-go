@@ -2,32 +2,35 @@
 
 [English](README_EN.md) | 简体中文
 
-一个将 Cursor Web 转换为基础 OpenAI chat completions 兼容 API 的服务。
+一个将 Cursor Web 转换为 OpenAI `chat/completions` 兼容 API 的 Go 服务。
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-blue.svg)](https://golang.org)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-orange.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 ## ✨ 特性
 
-- 🔄 **API 兼容**: 兼容基础 OpenAI chat completions 接口
+- 🔄 **API 兼容**: 兼容 OpenAI `chat/completions` 接口
 - ⚡ **高性能**: 低延迟响应
 - 🔐 **安全认证**: 支持 API Key 认证
-- 🌐 **多模型支持**: 支持多种 AI 模型
+- 🌐 **模型派生**: 自动暴露 `*-thinking` 模型
 - 🛡️ **错误处理**: 完善的错误处理机制
 - 📊 **健康检查**: 内置健康检查接口
 
 ## ✨ 功能特性
 
-- ✅ 兼容基础 OpenAI chat completions 格式
+- ✅ 兼容 OpenAI `chat/completions` 格式
 - ✅ 支持流式和非流式响应
 - ✅ 高性能 Go 语言实现
 - ✅ 自动处理 Cursor Web 认证
 - ✅ 简洁的 Web 界面
-- ❌ 不支持 tools / function calling / MCP
+- ✅ 支持 `tools` / `tool_choice` / `tool_calls`
+- ✅ 支持自动派生的 `-thinking` 模型
+- ❌ 暂不支持 Anthropic `/v1/messages` 与 MCP
 
 ## 🤖 支持的模型
 
-- **Anthropic Claude**: claude-sonnet-4.6
+- **Anthropic Claude**: `claude-sonnet-4.6`
+- **自动派生 thinking 模型**: `claude-sonnet-4.6-thinking`
 
 ## 🚀 快速开始
 
@@ -206,13 +209,69 @@ curl -X POST http://localhost:8002/v1/chat/completions \
   }'
 ```
 
+### 带工具的请求
+
+```bash
+curl -X POST http://localhost:8002/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 0000" \
+  -d '{
+    "model": "claude-sonnet-4.6",
+    "messages": [{"role": "user", "content": "帮我查询北京天气"}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "获取实时天气",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {"type": "string"}
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ]
+  }'
+```
+
+### `-thinking` 模型
+
+```bash
+curl -X POST http://localhost:8002/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 0000" \
+  -d '{
+    "model": "claude-sonnet-4.6-thinking",
+    "messages": [{"role": "user", "content": "先思考再决定要不要用工具"}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "q": {"type": "string"}
+            },
+            "required": ["q"]
+          }
+        }
+      }
+    ],
+    "stream": true
+  }'
+```
+
 ### 在第三方应用中使用
 
 在任何支持自定义 OpenAI API 的应用中（如 ChatGPT Next Web、Lobe Chat 等）：
 
 1. **API 地址**: `http://localhost:8002`
 2. **API 密钥**: `0000`（或自定义）
-3. **模型**: 选择支持的模型之一
+3. **模型**: 选择支持的模型之一；基础模型会自动有对应的 `-thinking` 版本
 
 ## ⚙️ 配置说明
 
@@ -223,7 +282,7 @@ curl -X POST http://localhost:8002/v1/chat/completions \
 | `PORT` | `8002` | 服务器端口 |
 | `DEBUG` | `false` | 调试模式（启用后显示详细日志和路由信息） |
 | `API_KEY` | `0000` | API 认证密钥 |
-| `MODELS` | `claude-sonnet-4.6` | 支持的模型列表（逗号分隔） |
+| `MODELS` | `claude-sonnet-4.6` | 基础模型列表（逗号分隔），服务会自动追加对应的 `-thinking` 公开模型 |
 | `TIMEOUT` | `60` | 请求超时时间（秒） |
 
 ### 调试模式

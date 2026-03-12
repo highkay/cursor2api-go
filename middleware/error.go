@@ -90,13 +90,21 @@ func handleError(c *gin.Context, err error) {
 		if e.Type == gin.ErrorTypePublic {
 			statusCode = http.StatusInternalServerError
 		}
-		
+
 		errorResponse := models.NewErrorResponse(
 			e.Error(),
 			"validation_error",
 			"invalid_request",
 		)
 		c.JSON(statusCode, errorResponse)
+
+	case *RequestValidationError:
+		errorResponse := models.NewErrorResponse(
+			e.Message,
+			"invalid_request_error",
+			e.Code,
+		)
+		c.JSON(http.StatusBadRequest, errorResponse)
 
 	default:
 		// 处理其他错误
@@ -109,15 +117,34 @@ func handleError(c *gin.Context, err error) {
 	}
 }
 
+// RequestValidationError 请求参数验证错误
+type RequestValidationError struct {
+	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
+// Error 实现 error 接口
+func (e *RequestValidationError) Error() string {
+	return e.Message
+}
+
+// NewRequestValidationError 创建请求参数验证错误
+func NewRequestValidationError(message, code string) *RequestValidationError {
+	return &RequestValidationError{
+		Message: message,
+		Code:    code,
+	}
+}
+
 // RecoveryHandler 自定义恢复中间件
 func RecoveryHandler() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		logrus.WithField("panic", recovered).Error("Panic occurred")
-		
+
 		if c.Writer.Written() {
 			return
 		}
-		
+
 		errorResponse := models.NewErrorResponse(
 			"Internal server error",
 			"panic_error",
@@ -170,8 +197,8 @@ func NewAuthenticationError(message string) *AuthenticationError {
 
 // RateLimitError 限流错误
 type RateLimitError struct {
-	Message     string `json:"message"`
-	RetryAfter  int    `json:"retry_after"`
+	Message    string `json:"message"`
+	RetryAfter int    `json:"retry_after"`
 }
 
 // Error 实现error接口

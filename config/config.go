@@ -21,6 +21,7 @@
 package config
 
 import (
+	"cursor2api-go/models"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -68,7 +69,7 @@ func LoadConfig() (*Config, error) {
 		Port:               getEnvAsInt("PORT", 8002),
 		Debug:              getEnvAsBool("DEBUG", false),
 		APIKey:             getEnv("API_KEY", "0000"),
-		Models:             getEnv("MODELS", "gpt-4o,claude-3.5-sonnet"),
+		Models:             getEnv("MODELS", "claude-sonnet-4.6"),
 		SystemPromptInject: getEnv("SYSTEM_PROMPT_INJECT", ""),
 		Timeout:            getEnvAsInt("TIMEOUT", 60),
 		MaxInputLength:     getEnvAsInt("MAX_INPUT_LENGTH", 200000),
@@ -109,16 +110,21 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// GetModels 获取模型列表
-func (c *Config) GetModels() []string {
-	models := strings.Split(c.Models, ",")
-	result := make([]string, 0, len(models))
-	for _, model := range models {
+// GetBaseModels 获取基础模型列表
+func (c *Config) GetBaseModels() []string {
+	modelsList := strings.Split(c.Models, ",")
+	result := make([]string, 0, len(modelsList))
+	for _, model := range modelsList {
 		if trimmed := strings.TrimSpace(model); trimmed != "" {
 			result = append(result, trimmed)
 		}
 	}
 	return result
+}
+
+// GetModels 获取模型列表
+func (c *Config) GetModels() []string {
+	return models.ExpandModelList(c.GetBaseModels())
 }
 
 // IsValidModel 检查模型是否有效

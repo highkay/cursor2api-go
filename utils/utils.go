@@ -107,6 +107,15 @@ func StreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, mode
 
 	// 生成响应ID
 	responseID := GenerateChatCompletionID()
+	started := false
+	toolCallIndex := 0
+
+	writeChunk := func(delta models.StreamDelta, finishReason *string) {
+		streamResp := models.NewChatCompletionStreamResponse(responseID, modelName, delta, finishReason)
+		if jsonData, err := json.Marshal(streamResp); err == nil {
+			WriteSSEEvent(c.Writer, "", string(jsonData))
+		}
+	}
 
 	// 处理流式数据
 	ctx := c.Request.Context()
@@ -119,22 +128,52 @@ func StreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, mode
 		case data, ok := <-chatGenerator:
 			if !ok {
 				// 通道关闭，发送完成事件
-				finishEvent := models.NewChatCompletionStreamResponse(responseID, modelName, "", stringPtr("stop"))
-				if jsonData, err := json.Marshal(finishEvent); err == nil {
-					WriteSSEEvent(c.Writer, "", string(jsonData))
+				reason := "stop"
+				if toolCallIndex > 0 {
+					reason = "tool_calls"
 				}
+				writeChunk(models.StreamDelta{}, stringPtr(reason))
 				WriteSSEEvent(c.Writer, "", "[DONE]")
 				return
 			}
 
 			switch v := data.(type) {
-			case string:
-				// 文本内容
-				if v != "" {
-					streamResp := models.NewChatCompletionStreamResponse(responseID, modelName, v, nil)
-					if jsonData, err := json.Marshal(streamResp); err == nil {
-						WriteSSEEvent(c.Writer, "", string(jsonData))
+			case models.AssistantEvent:
+				if !started {
+					writeChunk(models.StreamDelta{Role: "assistant"}, nil)
+					started = true
+				}
+
+				switch v.Kind {
+				case models.AssistantEventText:
+					if v.Text != "" {
+						writeChunk(models.StreamDelta{Content: v.Text}, nil)
 					}
+				case models.AssistantEventToolCall:
+					if v.ToolCall != nil {
+						writeChunk(models.StreamDelta{
+							ToolCalls: []models.ToolCallDelta{
+								{
+									Index: toolCallIndex,
+									ID:    v.ToolCall.ID,
+									Type:  v.ToolCall.Type,
+									Function: &models.FunctionCallDelta{
+										Name:      v.ToolCall.Function.Name,
+										Arguments: v.ToolCall.Function.Arguments,
+									},
+								},
+							},
+						}, nil)
+						toolCallIndex++
+					}
+				}
+			case string:
+				if !started {
+					writeChunk(models.StreamDelta{Role: "assistant"}, nil)
+					started = true
+				}
+				if v != "" {
+					writeChunk(models.StreamDelta{Content: v}, nil)
 				}
 
 			case models.Usage:
@@ -157,6 +196,8 @@ func StreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, mode
 func NonStreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, modelName string) {
 	var fullContent strings.Builder
 	var usage models.Usage
+	toolCalls := make([]models.ToolCall, 0, 2)
+	finishReason := "stop"
 
 	// 收集所有数据
 	ctx := c.Request.Context()
@@ -174,10 +215,21 @@ func NonStreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, m
 			if !ok {
 				// 数据收集完成，返回响应
 				responseID := GenerateChatCompletionID()
+				message := models.Message{
+					Role: "assistant",
+				}
+				if fullContent.Len() > 0 || len(toolCalls) == 0 {
+					message.Content = fullContent.String()
+				}
+				if len(toolCalls) > 0 {
+					message.ToolCalls = toolCalls
+					finishReason = "tool_calls"
+				}
 				response := models.NewChatCompletionResponse(
 					responseID,
 					modelName,
-					fullContent.String(),
+					message,
+					finishReason,
 					usage,
 				)
 				c.JSON(http.StatusOK, response)
@@ -185,6 +237,15 @@ func NonStreamChatCompletion(c *gin.Context, chatGenerator <-chan interface{}, m
 			}
 
 			switch v := data.(type) {
+			case models.AssistantEvent:
+				switch v.Kind {
+				case models.AssistantEventText:
+					fullContent.WriteString(v.Text)
+				case models.AssistantEventToolCall:
+					if v.ToolCall != nil {
+						toolCalls = append(toolCalls, *v.ToolCall)
+					}
+				}
 			case string:
 				fullContent.WriteString(v)
 			case models.Usage:
@@ -271,6 +332,7 @@ func CreateHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,

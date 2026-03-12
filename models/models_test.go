@@ -118,7 +118,13 @@ func TestToCursorMessages(t *testing.T) {
 }
 
 func TestNewChatCompletionResponse(t *testing.T) {
-	response := NewChatCompletionResponse("test-id", "gpt-4o", "Hello world", Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15})
+	response := NewChatCompletionResponse(
+		"test-id",
+		"gpt-4o",
+		Message{Role: "assistant", Content: "Hello world"},
+		"stop",
+		Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+	)
 
 	if response.ID != "test-id" {
 		t.Errorf("ID = %v, want test-id", response.ID)
@@ -135,7 +141,12 @@ func TestNewChatCompletionResponse(t *testing.T) {
 }
 
 func TestNewChatCompletionStreamResponse(t *testing.T) {
-	response := NewChatCompletionStreamResponse("test-id", "gpt-4o", "Hello", stringPtr("stop"))
+	response := NewChatCompletionStreamResponse(
+		"test-id",
+		"gpt-4o",
+		StreamDelta{Content: "Hello"},
+		stringPtr("stop"),
+	)
 
 	if response.ID != "test-id" {
 		t.Errorf("ID = %v, want test-id", response.ID)
@@ -145,6 +156,29 @@ func TestNewChatCompletionStreamResponse(t *testing.T) {
 	}
 	if response.Choices[0].FinishReason == nil || *response.Choices[0].FinishReason != "stop" {
 		t.Errorf("FinishReason = %v, want stop", response.Choices[0].FinishReason)
+	}
+}
+
+func TestResolveModelCapability(t *testing.T) {
+	capability := ResolveModelCapability("claude-sonnet-4.6-thinking")
+	if capability.BaseModel != "claude-sonnet-4.6" {
+		t.Fatalf("BaseModel = %v, want claude-sonnet-4.6", capability.BaseModel)
+	}
+	if !capability.ThinkingEnabled {
+		t.Fatalf("ThinkingEnabled = false, want true")
+	}
+}
+
+func TestExpandModelList(t *testing.T) {
+	models := ExpandModelList([]string{"claude-sonnet-4.6"})
+	expected := []string{"claude-sonnet-4.6", "claude-sonnet-4.6-thinking"}
+	if len(models) != len(expected) {
+		t.Fatalf("ExpandModelList() length = %v, want %v", len(models), len(expected))
+	}
+	for i := range expected {
+		if models[i] != expected[i] {
+			t.Fatalf("ExpandModelList()[%d] = %v, want %v", i, models[i], expected[i])
+		}
 	}
 }
 
