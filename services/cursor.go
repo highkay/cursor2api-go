@@ -189,6 +189,138 @@ func (s *CursorService) ChatCompletion(ctx context.Context, request *models.Chat
 	return nil, fmt.Errorf("failed after %d attempts", maxRetries)
 }
 
+type nonStreamCollectResult struct {
+	Message      models.Message
+	FinishReason string
+	Usage        models.Usage
+	ToolCalls    []models.ToolCall
+	Text         string
+}
+
+func (s *CursorService) collectNonStream(ctx context.Context, gen <-chan interface{}, modelName string) (nonStreamCollectResult, error) {
+	var fullContent strings.Builder
+	var usage models.Usage
+	toolCalls := make([]models.ToolCall, 0, 2)
+	finishReason := "stop"
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nonStreamCollectResult{}, ctx.Err()
+		case data, ok := <-gen:
+			if !ok {
+				msg := models.Message{Role: "assistant"}
+				if fullContent.Len() > 0 || len(toolCalls) == 0 {
+					msg.Content = fullContent.String()
+				}
+				if len(toolCalls) > 0 {
+					msg.ToolCalls = toolCalls
+					finishReason = "tool_calls"
+				}
+				return nonStreamCollectResult{
+					Message:      msg,
+					FinishReason: finishReason,
+					Usage:        usage,
+					ToolCalls:    toolCalls,
+					Text:         fullContent.String(),
+				}, nil
+			}
+
+			switch v := data.(type) {
+			case models.AssistantEvent:
+				switch v.Kind {
+				case models.AssistantEventText:
+					fullContent.WriteString(v.Text)
+				case models.AssistantEventToolCall:
+					if v.ToolCall != nil {
+						toolCalls = append(toolCalls, *v.ToolCall)
+					}
+				case models.AssistantEventThinking:
+					// thinking 对于 OpenAI chat.completion 的 message.content 不直接暴露
+					continue
+				}
+			case string:
+				fullContent.WriteString(v)
+			case models.Usage:
+				usage = v
+			case error:
+				return nonStreamCollectResult{}, v
+			default:
+				continue
+			}
+		}
+	}
+}
+
+func (s *CursorService) toolCallRequiredForRequest(request *models.ChatCompletionRequest) (bool, toolChoiceSpec, error) {
+	choice, err := parseToolChoice(request.ToolChoice)
+	if err != nil {
+		return false, toolChoiceSpec{}, err
+	}
+	if s.config != nil && s.config.KiloToolStrict && len(request.Tools) > 0 && choice.Mode == "auto" {
+		choice.Mode = "required"
+	}
+	if len(request.Tools) == 0 {
+		return false, choice, nil
+	}
+	return choice.Mode == "required" || choice.Mode == "function", choice, nil
+}
+
+func (s *CursorService) withToolRetrySystemMessage(request *models.ChatCompletionRequest, choice toolChoiceSpec) *models.ChatCompletionRequest {
+	cloned := *request
+	cloned.Messages = append([]models.Message(nil), request.Messages...)
+
+	var b strings.Builder
+	b.WriteString("TOOL USE REQUIRED.\n")
+	b.WriteString("Your next assistant message MUST be a tool call and must contain only the tool call in the exact bridge format. Do not output any natural language.\n")
+	if choice.Mode == "function" && strings.TrimSpace(choice.FunctionName) != "" {
+		b.WriteString(fmt.Sprintf("You MUST call function %q.\n", strings.TrimSpace(choice.FunctionName)))
+	} else {
+		b.WriteString("You MUST call at least one tool.\n")
+	}
+	b.WriteString("After receiving the tool result, you will provide the final answer.\n")
+
+	sys := models.Message{Role: "system", Content: b.String()}
+	cloned.Messages = append([]models.Message{sys}, cloned.Messages...)
+	return &cloned
+}
+
+// ChatCompletionNonStream runs a non-stream chat completion and returns a single OpenAI-compatible response.
+// It includes a Kilo-compatibility retry: if tools are provided and tool use is required but no tool_calls
+// are produced, it retries once with a stronger system instruction.
+func (s *CursorService) ChatCompletionNonStream(ctx context.Context, request *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	required, choice, err := s.toolCallRequiredForRequest(request)
+	if err != nil {
+		return nil, middleware.NewRequestValidationError(err.Error(), "invalid_tool_choice")
+	}
+
+	runOnce := func(req *models.ChatCompletionRequest) (nonStreamCollectResult, error) {
+		gen, err := s.ChatCompletion(ctx, req)
+		if err != nil {
+			return nonStreamCollectResult{}, err
+		}
+		return s.collectNonStream(ctx, gen, req.Model)
+	}
+
+	result, err := runOnce(request)
+	if err != nil {
+		return nil, err
+	}
+
+	if required && len(result.ToolCalls) == 0 {
+		retryReq := s.withToolRetrySystemMessage(request, choice)
+		retryResult, retryErr := runOnce(retryReq)
+		if retryErr == nil {
+			result = retryResult
+		} else {
+			logrus.WithError(retryErr).Warn("tool-required retry failed; returning first attempt")
+		}
+	}
+
+	respID := utils.GenerateChatCompletionID()
+	return models.NewChatCompletionResponse(respID, request.Model, result.Message, result.FinishReason, result.Usage), nil
+}
+
 func (s *CursorService) consumeSSE(ctx context.Context, resp *http.Response, output chan interface{}, parseConfig models.CursorParseConfig) {
 	defer close(output)
 	defer resp.Body.Close()

@@ -148,12 +148,17 @@ Use <thinking>...</thinking> for hidden reasoning when it helps. Keep your final
 
 ### 6.1 非流式
 
-`utils.NonStreamChatCompletion(...)` 会聚合内部事件：
+非流式响应会在 `services.CursorService.ChatCompletionNonStream(...)` 中聚合内部事件：
 
 - 只有文本时，返回普通 `message.content`
 - 有工具调用时，返回 assistant `tool_calls`
 - 若本轮出现工具调用，`finish_reason = "tool_calls"`
 - 否则 `finish_reason = "stop"`
+
+为提升与部分编排器（例如 Kilo Code）在“必须用工具”场景下的兼容性：
+
+- 当请求含 `tools` 且被判定为“必须至少调用一次工具”（`tool_choice=required/指定函数`，或启用 `KILO_TOOL_STRICT`）时，
+  如果第一轮没有产出任何 `tool_calls`，服务会自动重试 1 次（仅非流式）。
 
 ### 6.2 流式
 

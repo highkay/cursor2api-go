@@ -18,6 +18,14 @@ A Go service that converts Cursor Web into an OpenAI `chat/completions` compatib
 - ✅ Automatically derives `-thinking` public models
 - ❌ Does not yet support Anthropic `/v1/messages` or MCP
 
+## 🖼️ Screenshots
+
+Drop images into `docs/images/` and the README will render them.
+
+![Home preview](docs/images/home.png)
+![Tool calls preview 1](docs/images/play1.png)
+![Tool calls preview 2](docs/images/play2.png)
+
 ## 🤖 Supported Models
 
 - **Anthropic Claude**: `claude-sonnet-4.6`
@@ -275,6 +283,7 @@ In any app that supports custom OpenAI API (e.g., ChatGPT Next Web, Lobe Chat):
 | `API_KEY` | `0000` | API authentication key |
 | `MODELS` | `claude-sonnet-4.6` | Base model list (comma-separated); the service automatically exposes matching `-thinking` public models |
 | `TIMEOUT` | `60` | Request timeout (seconds) |
+| `KILO_TOOL_STRICT` | `false` | Kilo Code compatibility: if `tools` are provided and `tool_choice=auto`, treat it as “tool use required” |
 
 ### Debug Mode
 
@@ -303,6 +312,13 @@ Having issues? Check the **[Troubleshooting Guide](TROUBLESHOOTING.md)** for sol
 - Token fetch failures
 - Connection timeouts
 - Cloudflare blocking
+
+## 🧩 Kilo Code / Agent Orchestrator Compatibility
+
+Some orchestrators enforce “must use tools” and may throw errors like `MODEL_NO_TOOLS_USED` when a response contains no tool call.
+
+- **Recommended**: set `KILO_TOOL_STRICT=true` in `.env`
+- **Non-stream safety net**: if tools are provided and tool use is required (`tool_choice=required/function`, or `KILO_TOOL_STRICT`), but the first attempt produces no `tool_calls`, the server automatically retries once (non-stream only)
 
 
 ### Windows Startup Scripts

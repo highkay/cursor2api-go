@@ -13,19 +13,15 @@
 - ⚡ **高性能**: 低延迟响应
 - 🔐 **安全认证**: 支持 API Key 认证
 - 🌐 **模型派生**: 自动暴露 `*-thinking` 模型
+- 🧰 **工具调用**: 支持 `tools` / `tool_choice` / `tool_calls`
 - 🛡️ **错误处理**: 完善的错误处理机制
 - 📊 **健康检查**: 内置健康检查接口
 
-## ✨ 功能特性
+## 🖼️ 效果图
 
-- ✅ 兼容 OpenAI `chat/completions` 格式
-- ✅ 支持流式和非流式响应
-- ✅ 高性能 Go 语言实现
-- ✅ 自动处理 Cursor Web 认证
-- ✅ 简洁的 Web 界面
-- ✅ 支持 `tools` / `tool_choice` / `tool_calls`
-- ✅ 支持自动派生的 `-thinking` 模型
-- ❌ 暂不支持 Anthropic `/v1/messages` 与 MCP
+![首页预览](docs/images/home.png)
+![调用效果预览 1](docs/images/play1.png)
+![调用效果预览 2](docs/images/play2.png)
 
 ## 🤖 支持的模型
 
@@ -284,6 +280,7 @@ curl -X POST http://localhost:8002/v1/chat/completions \
 | `API_KEY` | `0000` | API 认证密钥 |
 | `MODELS` | `claude-sonnet-4.6` | 基础模型列表（逗号分隔），服务会自动追加对应的 `-thinking` 公开模型 |
 | `TIMEOUT` | `60` | 请求超时时间（秒） |
+| `KILO_TOOL_STRICT` | `false` | Kilo Code 兼容开关：当请求提供 `tools` 且 `tool_choice=auto` 时，将其提升为“必须至少调用一次工具” |
 
 ### 调试模式
 
@@ -312,6 +309,13 @@ DEBUG=true ./cursor2api-go
 - Token 获取失败
 - 连接超时
 - Cloudflare 拦截
+
+## 🧩 与 Kilo Code / Agent 编排器的兼容性
+
+部分编排器会在“提供了 tools”时强制模型必须产出工具调用，否则报类似 `MODEL_NO_TOOLS_USED` 的错误。为改善这一类兼容问题：
+
+- **建议**：在 `.env` 中启用 `KILO_TOOL_STRICT=true`
+- **非流式补救**：当请求提供 `tools` 且被判定为“必须用工具”（`tool_choice=required/指定函数`，或启用 `KILO_TOOL_STRICT`）时，如果本轮没有产出 `tool_calls`，服务会自动 **重试 1 次**（仅非流式；流式不重试）
 
 
 ### Windows 启动脚本说明

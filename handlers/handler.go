@@ -240,18 +240,23 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 	request.MaxTokens = models.ValidateMaxTokens(request.Model, request.MaxTokens)
 
 	// 调用Cursor服务
-	chatGenerator, err := h.cursorService.ChatCompletion(c.Request.Context(), &request)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to create chat completion")
-		middleware.HandleError(c, err)
-		return
-	}
-
 	// 根据是否流式返回不同响应
 	if request.Stream {
+		chatGenerator, err := h.cursorService.ChatCompletion(c.Request.Context(), &request)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to create chat completion")
+			middleware.HandleError(c, err)
+			return
+		}
 		utils.SafeStreamWrapper(utils.StreamChatCompletion, c, chatGenerator, request.Model)
 	} else {
-		utils.NonStreamChatCompletion(c, chatGenerator, request.Model)
+		resp, err := h.cursorService.ChatCompletionNonStream(c.Request.Context(), &request)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to create non-stream chat completion")
+			middleware.HandleError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, resp)
 	}
 }
 

@@ -29,6 +29,12 @@ func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest
 		return cursorBuildResult{}, middleware.NewRequestValidationError(err.Error(), "invalid_tool_choice")
 	}
 
+	// Kilo Code 兼容：当上层编排器希望“必须用工具”时，即便 tool_choice=auto，
+	// 也可以通过环境变量强制要求至少一次工具调用，避免 MODEL_NO_TOOLS_USED 一类的上层报错。
+	if s.config != nil && s.config.KiloToolStrict && len(request.Tools) > 0 && toolChoice.Mode == "auto" {
+		toolChoice.Mode = "required"
+	}
+
 	if len(request.Tools) == 0 && toolChoice.Mode != "auto" && toolChoice.Mode != "none" {
 		return cursorBuildResult{}, middleware.NewRequestValidationError("tool_choice requires tools to be provided", "missing_tools")
 	}
@@ -199,8 +205,10 @@ func buildProtocolPrompt(tools []models.Tool, toolChoice toolChoiceSpec, thinkin
 		switch toolChoice.Mode {
 		case "required":
 			builder.WriteString("\nYou must call at least one tool before your final answer.")
+			builder.WriteString("\nIMPORTANT: Your next assistant message MUST be a tool call using the exact format above. Do not include any natural language text in that message.")
 		case "function":
 			builder.WriteString(fmt.Sprintf("\nYou must call the function %q before your final answer.", toolChoice.FunctionName))
+			builder.WriteString("\nIMPORTANT: Your next assistant message MUST be a tool call using the exact format above. Do not include any natural language text in that message.")
 		}
 
 		sections = append(sections, builder.String())

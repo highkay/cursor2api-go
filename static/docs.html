@@ -292,6 +292,14 @@
                         <h3>🌊 流式支持</h3>
                         <div class="value">支持 SSE 流式响应</div>
                     </div>
+                    <div class="info-card">
+                        <h3>🧰 Tool Calls</h3>
+                        <div class="value">支持 tools / tool_choice / tool_calls</div>
+                    </div>
+                    <div class="info-card">
+                        <h3>🧠 Thinking</h3>
+                        <div class="value">自动暴露 -thinking 模型（thinking 不对外透出）</div>
+                    </div>
                 </div>
 
                 <div style="margin-top: 30px;">
@@ -327,6 +335,45 @@ curl -H "Authorization: Bearer 0000" http://localhost:8002/v1/models</code>
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
   }'</code>
+                    </div>
+
+                    <h4 style="margin-top: 15px; color: #555;">工具调用 (Tool Calls)</h4>
+                    <div class="code-block">
+                        <button class="copy-btn" onclick="copyCode(this)">复制</button>
+                        <code>curl -X POST http://localhost:8002/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 0000" \
+  -d '{
+    "model": "claude-sonnet-4.6",
+    "messages": [{"role": "user", "content": "What is 2+2? Use the calculator tool."}],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "calculator",
+          "description": "Evaluate a simple arithmetic expression.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "expression": {"type": "string"}
+            },
+            "required": ["expression"]
+          }
+        }
+      }
+    ],
+    "tool_choice": {"type": "function", "function": {"name": "calculator"}},
+    "stream": false
+  }'</code>
+                    </div>
+
+                    <h4 style="margin-top: 15px; color: #555;">Kilo Code 兼容（可选）</h4>
+                    <div class="code-block">
+                        <button class="copy-btn" onclick="copyCode(this)">复制</button>
+                        <code># 当上层强制“必须用工具”时，可在 .env 开启
+KILO_TOOL_STRICT=true
+
+# 非流式请求：若要求用工具但本轮未产出 tool_calls，会自动重试 1 次（流式不重试）</code>
                     </div>
                 </div>
             </div>
@@ -387,6 +434,10 @@ curl -H "Authorization: Bearer 0000" http://localhost:8002/v1/models</code>
     "stream": false
   }'</code>
                     </div>
+                    <p style="margin-top: 10px; color: #555;">
+                        说明：当响应包含工具调用时，非流式会返回 <code>message.tool_calls</code> 且 <code>finish_reason="tool_calls"</code>；
+                        流式会在 <code>delta.tool_calls</code> 中输出，并在最后一个 chunk 以 <code>finish_reason="tool_calls"</code> 收尾。
+                    </p>
                 </div>
 
                 <div class="endpoint-card">

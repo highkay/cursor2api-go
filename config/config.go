@@ -45,6 +45,11 @@ type Config struct {
 	Timeout            int    `json:"timeout"`
 	MaxInputLength     int    `json:"max_input_length"`
 
+	// 兼容性配置
+	// KILO_TOOL_STRICT=true 时：只要请求提供了 tools，就强制/强提示模型至少发起一次工具调用
+	// 以适配 Kilo Code 这类“必须用工具”的上层编排器。
+	KiloToolStrict bool `json:"kilo_tool_strict"`
+
 	// Cursor相关配置
 	ScriptURL string `json:"script_url"`
 	FP        FP     `json:"fp"`
@@ -73,6 +78,7 @@ func LoadConfig() (*Config, error) {
 		SystemPromptInject: getEnv("SYSTEM_PROMPT_INJECT", ""),
 		Timeout:            getEnvAsInt("TIMEOUT", 60),
 		MaxInputLength:     getEnvAsInt("MAX_INPUT_LENGTH", 200000),
+		KiloToolStrict:     getEnvAsBool("KILO_TOOL_STRICT", false),
 		ScriptURL:          getEnv("SCRIPT_URL", "https://cursor.com/_next/static/chunks/pages/_app.js"),
 		FP: FP{
 			UserAgent:               getEnv("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"),
